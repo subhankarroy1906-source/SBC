@@ -1,0 +1,1079 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SBC Weekly Performance Dashboard</title>
+
+  <!-- SheetJS for reading Excel in browser -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <!-- Chart.js for graph -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    :root{
+      --bg:#f4f6f9;
+      --card:#ffffff;
+      --muted:#666;
+      --shadow: 0 8px 26px rgba(27,31,35,0.08);
+      /* San Francisco / Apple system font stack */
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --proj-row-height:48px;
+      --leave-row-height:48px;
+    }
+
+    html,body{
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      height:100%;margin:0;background:var(--bg);color:#111;
+    }
+
+    /* ---------- HEADER ---------- */
+    .site-header{
+      width:100%;
+      background:white;
+      box-shadow:0 2px 6px rgba(0,0,0,0.04);
+      position:relative;
+      padding:12px 20px;
+      height:78px;
+      box-sizing:border-box;
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      z-index:5;
+    }
+    .site-header .title{font-size:20px;font-weight:700;text-align:center;}
+    .site-header .header-right{position:absolute;right:20px;top:50%;transform:translateY(-50%);text-align:right;}
+    .site-header .header-right img{height:50px;max-width:180px;object-fit:contain;display:block;}
+    .site-header .header-links{margin-top:6px;font-size:13px;color:var(--muted)}
+    .site-header .header-links a{color:#0b74ff;text-decoration:none;margin-left:8px}
+    .site-header .header-links a:hover{text-decoration:underline;}
+
+    /* ---------------- MAIN LAYOUT ---------------- */
+    /* Page-level scroll enabled so left + right scroll together */
+    .page{
+      width: 100%;
+      max-width: 1400px;
+      margin: 20px auto;
+      padding: 0 20px 40px;
+      /* make page height based on viewport but allow scrolling */
+      min-height: calc(100vh - 120px);
+      display:flex;
+      gap:20px;
+      box-sizing:border-box;
+      align-items:flex-start;
+      overflow:auto; /* <-- page-level scrolling affecting both columns */
+    }
+    .left{
+      width: 360px;
+      min-width: 280px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      /* allow left column to grow naturally within page scroll */
+    }
+    .right{
+      flex:1;
+      min-width: 320px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .card{background:var(--card);padding:14px;border-radius:12px;box-shadow:var(--shadow);box-sizing:border-box}
+    h1{margin:0 0 4px 0;font-size:18px}
+    .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+    .logo-wrap{display:flex;align-items:center;gap:10px}
+    .logo-preview{height:44px; max-width:220px; object-fit:contain; border-radius:6px}
+
+    .controls{display:flex;flex-direction:column;gap:8px}
+    label{font-size:13px;color:var(--muted)}
+    input[type=file]{font-size:13px}
+    .btn{display:inline-block;padding:8px 12px;border-radius:8px;border:none;background:#0b74ff;color:#fff;cursor:pointer}
+    .btn.ghost{background:transparent;color:#0b74ff;border:1px solid rgba(11,116,255,0.12)}
+    .muted{color:var(--muted);font-size:13px}
+
+    .zones{display:flex;flex-direction:column;gap:12px;margin-top:6px}
+    .zone{padding:12px;border-radius:10px;min-height:90px}
+    .zone-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+    .zone-title{font-weight:700}
+    /* no internal scroll for traffic lists */
+    .list{display:flex;flex-direction:column;gap:8px; /* no max-height; no overflow */ }
+    .person{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:8px;background:rgba(0,0,0,0.02)}
+    .arrow{cursor:pointer;border:none;background:transparent;font-size:14px;padding:4px 6px}
+
+    .green{background:linear-gradient(90deg,#e7f9ed,#f1fff6)}
+    .yellow{background:linear-gradient(90deg,#fff9e6,#fffbf0)}
+    .red{background:linear-gradient(90deg,#fff1f1,#fff6f6)}
+
+    /* popup (Positives & Negatives as lists) */
+    .popup{position:fixed;z-index:60;background:#fff;padding:12px;border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,0.12);min-width:260px;max-width:520px;max-height:70vh;overflow:auto}
+    .popup .close{float:right;border:none;background:transparent;font-size:14px;cursor:pointer}
+    .popup .section-title{font-weight:700;margin-top:8px;font-size:13px;color:#333}
+    .popup ul{margin:8px 0 0 18px;padding:0;color:#222}
+    .popup li{margin-bottom:6px;font-size:14px}
+
+    /* role switch */
+    .role-switch{display:flex;gap:8px;align-items:center}
+
+    /* tiny admin controls row */
+    .admin-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+    /* responsive small screens stack */
+    @media (max-width:1100px){
+      .page{flex-direction:column;height:auto;padding-bottom:40px;max-width:100%}
+      .left{width:100%} .right{width:100%}
+      .logo-preview{height:36px}
+    }
+
+    /* print: landscape */
+    @media print{
+      @page { size: landscape; }
+      .site-header{display:none}
+    }
+
+    /* Trainer schedule table styling + container constraints to avoid spill on resize */
+    .schedule-table{width:100%;border-collapse:collapse;margin-top:8px; table-layout: fixed; word-break: break-word;}
+    .schedule-table th,.schedule-table td{padding:8px;border-bottom:1px solid #eee;text-align:left;font-size:13px; white-space:normal; vertical-align:top;}
+    .schedule-table th{font-weight:700;background:transparent}
+    .no-schedule{color:var(--muted);font-size:13px}
+    /* container that limits visible height and enables independent scrolling */
+    #scheduleContent{
+      max-height: calc( (var(--proj-row-height) * 5) + 56px ); /* roughly 5 rows + header */
+      min-height: calc( (var(--proj-row-height) * 1) + 56px );
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 6px; /* avoid overlay with scrollbar */
+      box-sizing: border-box;
+    }
+    .schedule-table thead th{ position: sticky; top: 0; background: #fff; z-index: 2; }
+
+    /* ---------------- Projects table styles ---------------- */
+    .projects-card{ display:flex; flex-direction:column; gap:10px; }
+    .projects-controls{ display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .projects-filter{ display:flex; gap:8px; align-items:center; }
+    .projects-table-container{
+      border-radius:8px;
+      overflow:hidden;
+      border:1px solid #eee;
+      background:#fff;
+      /* show 5 rows: calculate max height -> 5 * row-height + header (approx 56px) */
+      max-height: calc( (var(--proj-row-height) * 5) + 56px );
+      min-height: calc( (var(--proj-row-height) * 2) + 56px );
+      overflow-y:auto; /* <-- individual Projects scroll */
+    }
+    .projects-table{
+      width:100%;
+      border-collapse:collapse;
+      table-layout: fixed;
+    }
+    .projects-table th, .projects-table td{
+      padding:10px 12px;
+      border-bottom:1px solid #f0f0f0;
+      font-size:14px;
+      white-space:normal;
+      vertical-align:middle;
+      word-break:break-word;
+    }
+    .projects-table thead th{
+      position:sticky;
+      top:0;
+      background:#fff;
+      z-index:2;
+      font-weight:700;
+      border-bottom:1px solid #e6e6e6;
+    }
+    .projects-table tbody tr{ height: var(--proj-row-height); }
+    .projects-empty{ padding:16px; color:var(--muted) }
+
+    /* small tag for status */
+    .status-pill{ display:inline-block; padding:6px 8px; border-radius:999px; font-size:13px; font-weight:600; }
+    .status-wip{ background:#fff6e6; color:#a36b00; border:1px solid rgba(163,107,0,0.08) }
+    .status-completed{ background:#ecfdf5; color:#0f7a3b; border:1px solid rgba(15,122,59,0.08) }
+
+    /* Achievements list inside popup */
+    .ach-item{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; padding:8px 6px; border-bottom:1px solid #f5f5f5; }
+    .ach-left{ flex:1; }
+    .ach-title{ font-weight:700; display:block; margin-bottom:4px; }
+    .ach-personnel{ font-size:13px; color:var(--muted); display:block; margin-bottom:6px;}
+    .ach-detail{ font-style:italic; color:#222; margin-top:6px; display:none; }
+    .ach-toggle{ cursor:pointer; background:transparent; border:none; font-size:16px; padding:6px; }
+
+    /* ---------------- Leave styles ---------------- */
+    .leave-card{ display:flex; flex-direction:column; gap:10px; }
+    .leave-controls{ display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .leave-filter{ display:flex; gap:8px; align-items:center; }
+    .leave-table-container{
+      border-radius:8px;
+      overflow:hidden;
+      border:1px solid #eee;
+      background:#fff;
+      /* show 5 rows: calculate max height -> 5 * row-height + header (approx 56px) */
+      max-height: calc( (var(--leave-row-height) * 5) + 56px );
+      min-height: calc( (var(--leave-row-height) * 2) + 56px );
+      overflow-y:auto; /* individual Leave scroll */
+    }
+    .leave-table{ width:100%; border-collapse:collapse; table-layout: fixed; }
+    .leave-table th, .leave-table td{ padding:10px 12px; border-bottom:1px solid #f0f0f0; font-size:14px; white-space:normal; vertical-align:middle; word-break:break-word;}
+    .leave-table thead th{ position:sticky; top:0; background:#fff; z-index:2; font-weight:700; border-bottom:1px solid #e6e6e6; }
+    .leave-table tbody tr{ height: var(--leave-row-height); }
+    .leave-empty{ padding:16px; color:var(--muted) }
+
+  </style>
+</head>
+<body>
+
+  <!-- Top header: centered title, logo top-right, links below logo -->
+  <div class="site-header" role="banner">
+    <div class="title">SBC Weekly Performance Dashboard</div>
+
+    <div class="header-right" aria-hidden="false">
+      <!-- keep same orgLogo id so existing JS still works -->
+      <img id="orgLogo" class="logo-preview" src="" alt="" style="display:none" />
+      <div class="header-links">
+        <a href="#" id="aboutTop">About us</a>
+        <a href="#" id="adminTopLink">Admin login</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="page" role="main" aria-label="Dashboard content">
+    <!-- LEFT column: controls + zones -->
+    <div class="left">
+      <div class="card">
+        <div class="topbar">
+          <div>
+            <div class="muted">Landscape layout • Weekly update by admin</div>
+          </div>
+
+          <div class="logo-wrap" id="logoDisplay" style="visibility:hidden">
+            <img id="orgLogo_left" class="logo-preview" src="" alt="" style="display:none" />
+          </div>
+        </div>
+
+        <!-- role selection -->
+        <div style="margin-top:10px" class="muted">Access</div>
+        <div class="role-switch" style="margin-bottom:10px">
+          <button id="employeeBtn" class="btn ghost">Employee view</button>
+          <button id="adminBtn" class="btn">Admin login</button>
+          <div style="flex:1"></div>
+          <div id="adminBadge" class="muted" style="display:none">Signed in as admin</div>
+        </div>
+
+        <!-- admin-only controls (restored original layout) -->
+        <div id="adminControls" style="display:none" class="controls">
+          <div class="admin-row">
+            <div>
+              <label>Upload Sheet 1 (zones & reasons)</label><br/>
+              <input id="file1" type="file" accept=".xlsx,.xls" />
+            </div>
+
+            <div>
+              <label>Upload Sheet 2 (lateness)</label><br/>
+              <input id="file2" type="file" accept=".xlsx,.xls" />
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;align-items:center">
+            <div>
+              <label>Set/Upload logo (admin)</label><br/>
+              <input id="logoFile" type="file" accept="image/*" />
+            </div>
+            <div style="flex:1">
+              <label>— or paste logo URL below</label><br/>
+              <input id="logoURL" type="text" placeholder="https://example.com/logo.png" style="width:100%;padding:8px;border-radius:8px;border:1px solid #e6e9ef" />
+            </div>
+          </div>
+
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="saveLogoBtn" class="btn">Apply logo</button>
+            <button id="clearLogoBtn" class="btn ghost">Clear logo</button>
+            <div style="flex:1"></div>
+            <button id="logoutBtn" class="btn ghost" style="display:none">Logout admin</button>
+          </div>
+
+          <div style="margin-top:10px">
+            <label>Upload Trainer Schedule (first sheet will be displayed)</label><br/>
+            <input id="file3" type="file" accept=".xlsx,.xls" />
+          </div>
+
+          <div style="margin-top:10px">
+            <label>Upload Projects (first sheet should contain Project, Personnel, Start Date, Completion Date, Status)</label><br/>
+            <input id="file4" type="file" accept=".xlsx,.xls" />
+          </div>
+
+          <div style="margin-top:10px">
+            <label>Upload Achievements (Project Title, Project Detail, Personnel Involved)</label><br/>
+            <input id="file5" type="file" accept=".xlsx,.xls" />
+          </div>
+
+          <div style="margin-top:10px">
+            <label>Upload Leave (Name, Full Date, Type of Leave, Amount of Leave, Reason)</label><br/>
+            <input id="file6" type="file" accept=".xlsx,.xls" />
+          </div>
+
+          <div class="muted" style="margin-top:8px">Tip: Re-upload files each week to refresh the view.</div>
+        </div>
+
+        <hr style="margin:12px 0;border:none;border-top:1px solid #eee" />
+
+        <!-- Traffic Light -->
+        <h2 style="margin-bottom:8px">Traffic Light</h2>
+        <div class="zones">
+          <div id="greenZone" class="zone green card">
+            <div class="zone-header"><span class="zone-title">Green</span><small class="muted"> (Good)</small></div>
+            <div class="list" id="greenList"><div class="muted">No data loaded</div></div>
+          </div>
+
+          <div id="yellowZone" class="zone yellow card">
+            <div class="zone-header"><span class="zone-title">Yellow</span><small class="muted"> (Watch)</small></div>
+            <div class="list" id="yellowList"><div class="muted">No data loaded</div></div>
+          </div>
+
+          <div id="redZone" class="zone red card">
+            <div class="zone-header"><span class="zone-title">Red</span><small class="muted"> (Action)</small></div>
+            <div class="list" id="redList"><div class="muted">No data loaded</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- small legend / notes card -->
+      <div class="card" style="margin-top:10px">
+        <div style="font-weight:700">Notes</div>
+        <ul style="margin:6px 0 0 18px;padding:0;color:var(--muted)">
+          <li>Admin can upload Excel weekly (Sheet1 & Sheet2 & Projects sheet & Leave sheet).</li>
+          <li>Employee view is read-only — no file inputs visible.</li>
+          <li>For secure access, consider server-side authentication (I can help).</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- RIGHT column: Achievements + chart + Leave + Projects + Trainer schedule -->
+    <div class="right">
+      <!-- Achievements section (button) -->
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div>
+          <h2 style="margin:0">Achievements</h2>
+          <div class="muted" style="font-size:13px">Click to view recent achievements uploaded by admin</div>
+        </div>
+        <div>
+          <button id="achievementsBtn" class="btn">View Achievements</button>
+        </div>
+      </div>
+
+      <div class="card" style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <h2 style="margin:0">SBC Attendance Dashboard (lateness)</h2>
+            <div class="muted" style="font-size:13px">Bar chart uses the “Grand Total” column only.</div>
+          </div>
+          <div>
+            <button id="printBtn" class="btn ghost">Print (landscape)</button>
+          </div>
+        </div>
+        <div style="flex:1;min-height:340px">
+          <!-- canvas with CSS height for stability -->
+          <canvas id="latenessChart" style="width:100%;height:380px"></canvas>
+        </div>
+        <div class="muted">If no chart appears, admin needs to upload Sheet 2 containing a 'Grand Total' (or similar) column.</div>
+      </div>
+
+      <!-- NEW: Leave table card (below chart, above Projects) -->
+      <div id="leaveCard" class="card leave-card">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <h2 style="margin:0;font-size:16px">Leave</h2>
+            <div class="muted" style="font-size:13px">Displays recent leave entries (sorted by date; newest first). Use Name filter to view a particular person.</div>
+          </div>
+          <div class="leave-controls">
+            <div class="leave-filter">
+              <label for="leaveNameFilter" class="muted" style="margin-right:6px">Name:</label>
+              <select id="leaveNameFilter" style="padding:8px;border-radius:8px;border:1px solid #e6e9ef">
+                <option value="all">All</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="leave-table-container" id="leaveContainer">
+          <table class="leave-table" id="leaveTable" role="table" aria-label="Leave table">
+            <thead>
+              <tr>
+                <th style="width:24%;">Name</th>
+                <th style="width:20%;">Full Date</th>
+                <th style="width:18%;">Type of Leave</th>
+                <th style="width:18%;">Amount</th>
+                <th style="width:20%;">Reason</th>
+              </tr>
+            </thead>
+            <tbody id="leaveBody">
+              <tr><td colspan="5" class="leave-empty">No leave entries loaded</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Projects table card -->
+      <div id="projectsCard" class="card projects-card">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <h2 style="margin:0;font-size:16px">Projects</h2>
+            <div class="muted" style="font-size:13px">Displays latest projects (bottom-up from Excel). Use filter to show WIP or Completed projects.</div>
+          </div>
+          <div class="projects-controls">
+            <div class="projects-filter">
+              <label for="projectStatusFilter" class="muted" style="margin-right:6px">Status:</label>
+              <select id="projectStatusFilter" style="padding:8px;border-radius:8px;border:1px solid #e6e9ef">
+                <option value="all">All</option>
+                <option value="wip">WIP</option>
+                <option value="completed">Completed</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="projects-table-container" id="projectsContainer" aria-live="polite">
+          <table class="projects-table" id="projectsTable" role="table" aria-label="Projects table">
+            <thead>
+              <tr>
+                <th style="width:32%;">Project Name</th>
+                <th style="width:22%;">Personnel</th>
+                <th style="width:14%;">Start Date</th>
+                <th style="width:14%;">Completion Date</th>
+                <th style="width:18%;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="projectsBody">
+              <tr><td colspan="5" class="projects-empty">No projects loaded</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Trainer schedule card (fixed container with internal scroll to avoid spill on resize) -->
+      <div id="trainerScheduleCard" class="card" style="min-height:80px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <h2 style="margin:0;font-size:16px">Trainer Schedule</h2>
+            <div class="muted" style="font-size:13px">Displays the first worksheet from the uploaded Trainer Schedule Excel file.</div>
+          </div>
+        </div>
+
+        <div id="scheduleContent" style="margin-top:10px">
+          <div class="no-schedule">No schedule loaded</div>
+        </div>
+      </div>
+
+      <!-- popup container -->
+      <div id="popupContainer"></div>
+    </div>
+  </div>
+
+  <script>
+    /* ---------------------------
+       Simple role handling & admin protection
+    --------------------------- */
+
+    const ADMIN_PASSWORD = "admin123";
+
+    const adminBtn = document.getElementById('adminBtn');
+    const employeeBtn = document.getElementById('employeeBtn');
+    const adminControls = document.getElementById('adminControls');
+    const adminBadge = document.getElementById('adminBadge');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const adminTopLink = document.getElementById('adminTopLink');
+
+    let isAdmin = false;
+
+    function setRoleToEmployee() {
+      isAdmin = false;
+      adminControls.style.display = 'none';
+      adminBadge.style.display = 'none';
+      logoutBtn.style.display = 'none';
+      adminBtn.style.display = 'inline-block';
+      employeeBtn.classList.add('ghost');
+      adminBtn.classList.remove('ghost');
+
+      // hide file inputs for security-by-UI
+      ['file1','file2','logoFile','logoURL','saveLogoBtn','clearLogoBtn','file3','file4','file5','file6'].forEach(id=>{
+        const el = document.getElementById(id); if(el) el.style.display='none';
+      });
+    }
+
+    function setRoleToAdmin() {
+      isAdmin = true;
+      adminControls.style.display = 'flex';
+      adminBadge.style.display = 'inline-block';
+      logoutBtn.style.display = 'inline-block';
+      adminBtn.style.display = 'none';
+      employeeBtn.classList.remove('ghost');
+      adminBtn.classList.add('ghost');
+
+      ['file1','file2','logoFile','logoURL','saveLogoBtn','clearLogoBtn','file3','file4','file5','file6'].forEach(id=>{
+        const el = document.getElementById(id); if(el) el.style.display='inline-block';
+      });
+    }
+
+    employeeBtn.addEventListener('click', ()=> setRoleToEmployee() );
+
+    function doAdminPrompt() {
+      const pw = prompt("Enter admin password:");
+      if(pw === null) return;
+      if(pw === ADMIN_PASSWORD) setRoleToAdmin();
+      else alert("Incorrect password.");
+    }
+    adminBtn.addEventListener('click', doAdminPrompt);
+    adminTopLink.addEventListener('click', (e)=>{ e.preventDefault(); doAdminPrompt(); });
+    logoutBtn.addEventListener('click', ()=> { if(confirm("Sign out admin view?")) setRoleToEmployee(); });
+
+    // Init
+    setRoleToEmployee();
+
+    /* ---------------------------
+       Logo handling
+    --------------------------- */
+    const orgLogoEl = document.getElementById('orgLogo');
+    const logoFileInput = document.getElementById('logoFile');
+    const logoURLInput = document.getElementById('logoURL');
+    const saveLogoBtn = document.getElementById('saveLogoBtn');
+    const clearLogoBtn = document.getElementById('clearLogoBtn');
+
+    function applyLogoSrc(src){
+      if(!src){ orgLogoEl.style.display='none'; orgLogoEl.src=''; return; }
+      orgLogoEl.src = src; orgLogoEl.style.display='block';
+    }
+
+    logoFileInput && logoFileInput.addEventListener('change', ()=>{
+      const f = logoFileInput.files[0]; if(!f) return;
+      const url = URL.createObjectURL(f);
+      logoURLInput.value = '';
+      applyLogoSrc(url);
+    });
+    saveLogoBtn && saveLogoBtn.addEventListener('click', ()=> {
+      const url = (logoURLInput.value||'').trim();
+      if(url) applyLogoSrc(url); else if(!orgLogoEl.src) alert("Pick a file or paste a logo URL.");
+    });
+    clearLogoBtn && clearLogoBtn.addEventListener('click', ()=> { if(logoFileInput) logoFileInput.value=''; logoURLInput.value=''; applyLogoSrc(''); });
+
+    /* ---------------------------
+       Small helpers
+    --------------------------- */
+    function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<>"']/g, function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];}); }
+    function parseDateSafe(v){
+      if(!v && v!==0) return null;
+      if(v instanceof Date && !isNaN(v)) return v;
+      // try to parse string
+      const s = String(v).trim();
+      // Excel sometimes gives 'YYYY-MM-DD' or other locales. Use Date constructor fallback.
+      const d = new Date(s);
+      if(!isNaN(d)) return d;
+      // try replacing / with - and reorder if necessary (common dd/mm/yyyy)
+      const parts = s.split(/[\/\-\.\s]/).filter(Boolean);
+      if(parts.length===3){
+        // heuristics: if first part > 31 -> yyyy-mm-dd
+        const [a,b,c] = parts.map(p => p.replace(/[^\d]/g,''));
+        if(a.length===4){ // yyyy mm dd
+          const dt = new Date(`${a}-${b}-${c}`);
+          if(!isNaN(dt)) return dt;
+        } else if(c.length===4){ // dd mm yyyy -> yyyy-mm-dd
+          const dt = new Date(`${c}-${b}-${a}`);
+          if(!isNaN(dt)) return dt;
+        }
+      }
+      return null;
+    }
+
+    /* ---------------------------
+       Popup handling used elsewhere
+    --------------------------- */
+    const popupContainer = document.getElementById('popupContainer');
+    let currentPopup = null;
+    function closePopup(){ if(currentPopup){ window.removeEventListener('click', currentPopup._onDocClick); currentPopup.remove(); currentPopup=null; } }
+    window.addEventListener('resize', closePopup);
+    window.addEventListener('scroll', closePopup);
+
+    /* ---------------------------
+       Achievements (existing logic; unchanged)
+    --------------------------- */
+    let achievementsRaw = [];
+    const achievementsBtn = document.getElementById('achievementsBtn');
+
+    function buildAchievementsPopup(anchorEl){
+      closePopup();
+      const rect = anchorEl.getBoundingClientRect();
+      const popup = document.createElement('div'); popup.className='popup';
+      popup.style.top = (rect.bottom + 8) + 'px';
+      const winW = window.innerWidth; const popupWidth = 520; let leftPos = rect.left;
+      if (leftPos + popupWidth + 20 > winW) leftPos = Math.max(10, winW - popupWidth - 20);
+      popup.style.left = leftPos + 'px';
+
+      let inner = `<button class="close" title="close">✕</button><div style="font-weight:700;margin-bottom:6px">Achievements</div>`;
+      if(!achievementsRaw.length){ inner += `<div class="muted">No achievements loaded. Admin can upload an Achievements Excel file.</div>`; popup.innerHTML=inner; popup.querySelector('.close').addEventListener('click', closePopup); popupContainer.appendChild(popup); currentPopup = popup; setTimeout(()=>{ window.addEventListener('click', onDocClick); }, 0); function onDocClick(ev){ if(!popup.contains(ev.target) && ev.target !== anchorEl) closePopup(); } popup._onDocClick = onDocClick; return; }
+
+      inner += `<div style="display:flex;flex-direction:column;gap:6px">`;
+      const rows = achievementsRaw.slice().reverse();
+      rows.forEach((r, idx) => {
+        const title = escapeHtml(r.Title||'');
+        const detail = escapeHtml(r.Detail||'');
+        const personnel = escapeHtml(r.Personnel||'');
+        inner += `<div class="ach-item" data-idx="${idx}"><div class="ach-left"><span class="ach-title">${title}</span><span class="ach-personnel">${personnel}</span><div class="ach-detail" id="ach-detail-${idx}">${detail}</div></div><div style="flex-shrink:0;"><button class="ach-toggle" data-target="${idx}" aria-expanded="false" title="Show details">▼</button></div></div>`;
+      });
+      inner += `</div>`;
+      popup.innerHTML = inner; popup.querySelector('.close').addEventListener('click', closePopup); popupContainer.appendChild(popup); currentPopup = popup;
+      popup.querySelectorAll('.ach-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const t = e.currentTarget;
+          const idx = t.getAttribute('data-target');
+          const d = popup.querySelector(`#ach-detail-${idx}`);
+          if(!d) return;
+          const isVisible = d.style.display === 'block';
+          d.style.display = isVisible ? 'none' : 'block';
+          t.innerText = isVisible ? '▼' : '▲';
+          t.setAttribute('aria-expanded', String(!isVisible));
+        });
+      });
+      setTimeout(()=>{ window.addEventListener('click', onDocClick); }, 0);
+      function onDocClick(ev){ if(!popup.contains(ev.target) && ev.target !== anchorEl) closePopup(); }
+      popup._onDocClick = onDocClick;
+    }
+    if(achievementsBtn) achievementsBtn.addEventListener('click', (e)=> buildAchievementsPopup(e.currentTarget) );
+
+    /* ---------------------------
+       File handlers wiring
+    --------------------------- */
+    const file1 = document.getElementById('file1');
+    const file2 = document.getElementById('file2');
+    const file3 = document.getElementById('file3');
+    const file4 = document.getElementById('file4');
+    const file5 = document.getElementById('file5');
+    const file6 = document.getElementById('file6');
+
+    if(file1) file1.addEventListener('change', handleFile1);
+    if(file2) file2.addEventListener('change', handleFile2);
+    if(file3) file3.addEventListener('change', handleFile3);
+    if(file4) file4.addEventListener('change', handleFile4);
+    if(file5) file5.addEventListener('change', handleFile5);
+    if(file6) file6.addEventListener('change', handleFile6);
+
+    function handleFile1(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = function(evt){ try{ const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type:'array'}); const sheetName = workbook.SheetNames[0]; const sheet = workbook.Sheets[sheetName]; const json = XLSX.utils.sheet_to_json(sheet, {defval:''}); populateZones(json); }catch(err){ alert('Error reading sheet 1: '+err.message); } }; reader.readAsArrayBuffer(f); }
+
+    function handleFile2(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = function(evt){ try{ const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type:'array'}); const sheetName = workbook.SheetNames[0]; const sheet = workbook.Sheets[sheetName]; const json = XLSX.utils.sheet_to_json(sheet, {defval:0}); populateChart(json); }catch(err){ alert('Error reading sheet 2: '+err.message); } }; reader.readAsArrayBuffer(f); }
+
+    function handleFile3(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = function(evt){ try{ const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type:'array', cellDates:true}); const sheetName = workbook.SheetNames[0]; const sheet = workbook.Sheets[sheetName]; const json = XLSX.utils.sheet_to_json(sheet, {defval:'', raw:false, dateNF: 'yyyy-mm-dd'}); populateScheduleTable(json); }catch(err){ alert('Error reading trainer schedule: '+err.message); } }; reader.readAsArrayBuffer(f); }
+
+    function handleFile4(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = function(evt){ try{ const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type:'array', cellDates:true}); const sheetName = workbook.SheetNames[0]; const sheet = workbook.Sheets[sheetName]; const json = XLSX.utils.sheet_to_json(sheet, {defval:'', raw:false, dateNF: 'yyyy-mm-dd'}); populateProjectsTable(json); }catch(err){ alert('Error reading projects sheet: '+err.message); } }; reader.readAsArrayBuffer(f); }
+
+    function handleFile5(e){ const f = e.target.files[0]; if(!f) return; const reader = new FileReader(); reader.onload = function(evt){ try{ const data = new Uint8Array(evt.target.result); const workbook = XLSX.read(data, {type:'array', cellDates:true}); const sheetName = workbook.SheetNames[0]; const sheet = workbook.Sheets[sheetName]; const json = XLSX.utils.sheet_to_json(sheet, {defval:'', raw:false, dateNF: 'yyyy-mm-dd'}); achievementsRaw = (Array.isArray(json) ? json : []).map(row => { const keys = Object.keys(row||{}); const lowered = keys.map(k => k.trim().toLowerCase()); const titleIdx = lowered.findIndex(k => ['project title','projecttitle','title','project','name'].some(x => k === x || k.includes(x))); const detailIdx = lowered.findIndex(k => ['project detail','projectdetail','detail','description','project description','description of project'].some(x => k === x || k.includes(x))); const personnelIdx = lowered.findIndex(k => ['personnel involved','personnel','team','assigned','people','involved'].some(x => k === x || k.includes(x))); const Title = titleIdx >= 0 ? String(row[keys[titleIdx]] || '') : (row['Project Title'] || row['Title'] || ''); const Detail = detailIdx >= 0 ? String(row[keys[detailIdx]] || '') : (row['Project Detail'] || row['Detail'] || ''); const Personnel = personnelIdx >= 0 ? String(row[keys[personnelIdx]] || '') : (row['Personnel Involved'] || row['Personnel'] || ''); return { Title, Detail, Personnel }; }); alert('Achievements loaded: ' + achievementsRaw.length + ' rows. Click "View Achievements" to see them.'); }catch(err){ alert('Error reading achievements sheet: '+err.message); } }; reader.readAsArrayBuffer(f); }
+
+    /* ---------------------------
+       New: Leave file handler + rendering
+       - expects columns like: Name, Full Date, Type of Leave, Amount of Leave, Reason
+       - sorts by Full Date descending (most recent first)
+       - shows 5 entries at once (container CSS), with internal scroll
+       - Name filter populated dynamically from uploaded data
+    --------------------------- */
+    let lastLeaveRaw = []; // array of raw rows (kept for filtering)
+    function handleFile6(e){
+      const f = e.target.files[0]; if(!f) return;
+      const reader = new FileReader();
+      reader.onload = function(evt){
+        try{
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, {type:'array', cellDates:true});
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          // raw:false so Excel dates become Date objects where possible
+          const json = XLSX.utils.sheet_to_json(sheet, {defval:'', raw:false, dateNF:'yyyy-mm-dd'});
+          lastLeaveRaw = Array.isArray(json) ? json.slice() : [];
+          populateLeaveTable();
+          alert('Leave file loaded: ' + lastLeaveRaw.length + ' rows.');
+        }catch(err){
+          alert('Error reading leave sheet: '+err.message);
+        }
+      };
+      reader.readAsArrayBuffer(f);
+    }
+
+    // utility to find likely keys in leave rows
+    function findLeaveKey(keys, candidates){
+      const lowered = keys.map(k => k.trim().toLowerCase());
+      for(const c of candidates){
+        for(let i=0;i<lowered.length;i++){
+          if(lowered[i].includes(c)) return keys[i];
+        }
+      }
+      return null;
+    }
+
+    function populateLeaveTable(){
+      const body = document.getElementById('leaveBody');
+      const nameFilterEl = document.getElementById('leaveNameFilter');
+      body.innerHTML = '';
+
+      if(!lastLeaveRaw || lastLeaveRaw.length===0){
+        body.innerHTML = '<tr><td colspan="5" class="leave-empty">No leave entries loaded</td></tr>';
+        // reset name filter
+        if(nameFilterEl){ nameFilterEl.innerHTML = '<option value="all">All</option>'; }
+        return;
+      }
+
+      // find keys
+      const sample = lastLeaveRaw[0];
+      const keys = Object.keys(sample);
+      const nameKey = findLeaveKey(keys, ['name','employee','person']) || keys[0];
+      const dateKey = findLeaveKey(keys, ['full date','date','fulldate','leave date','day']) || keys[1] || '';
+      const typeKey = findLeaveKey(keys, ['type','leave type','typeofleave','category']) || keys.find(k=>k.toLowerCase().includes('type')) || '';
+      const amountKey = findLeaveKey(keys, ['amount','days','amount of leave','no.','qty']) || keys.find(k=>k.toLowerCase().includes('amount')) || '';
+      const reasonKey = findLeaveKey(keys, ['reason','note','notes','comment']) || keys.find(k=>k.toLowerCase().includes('reason')) || '';
+
+      // normalise rows with parsed date
+      const normal = lastLeaveRaw.map(r=>{
+        const rawDate = r[dateKey] || r['Full Date'] || r['Date'] || '';
+        const parsed = parseDateSafe(rawDate) || null;
+        return {
+          __raw: r,
+          Name: String(r[nameKey] || r['Name'] || '') ,
+          DateObj: parsed,
+          DateText: parsed ? (parsed.getFullYear() + '-' + String(parsed.getMonth()+1).padStart(2,'0') + '-' + String(parsed.getDate()).padStart(2,'0')) : String(rawDate || ''),
+          Type: String(r[typeKey] || r['Type of Leave'] || r[typeKey] || ''),
+          Amount: String(r[amountKey] || r['Amount of Leave'] || ''),
+          Reason: String(r[reasonKey] || r['Reason'] || '')
+        };
+      });
+
+      // sort by date descending (most recent first). Items without valid date go to bottom.
+      normal.sort((a,b)=>{
+        if(a.DateObj && b.DateObj) return b.DateObj - a.DateObj;
+        if(a.DateObj && !b.DateObj) return -1;
+        if(!a.DateObj && b.DateObj) return 1;
+        return 0;
+      });
+
+      // populate name filter options from unique names
+      const names = Array.from(new Set(normal.map(x => (x.Name||'').trim()).filter(Boolean))).sort((a,b)=> a.localeCompare(b));
+      if(nameFilterEl){
+        const cur = nameFilterEl.value || 'all';
+        nameFilterEl.innerHTML = '<option value="all">All</option>';
+        names.forEach(n => {
+          const opt = document.createElement('option'); opt.value = n; opt.innerText = n; nameFilterEl.appendChild(opt);
+        });
+        // restore previous if exists
+        if(cur && Array.from(nameFilterEl.options).some(o=>o.value===cur)) nameFilterEl.value = cur;
+      }
+
+      // apply current selected name filter
+      const selectedName = (document.getElementById('leaveNameFilter').value || 'all').toLowerCase();
+
+      const filtered = normal.filter(r => {
+        if(selectedName === 'all') return true;
+        return (r.Name || '').toLowerCase() === selectedName;
+      });
+
+      if(filtered.length === 0){
+        body.innerHTML = '<tr><td colspan="5" class="leave-empty">No leave entries match the selected name</td></tr>';
+        return;
+      }
+
+      // Build rows (displayed newest first; CSS container restricts to 5 visible)
+      for(const r of filtered){
+        const tr = document.createElement('tr');
+        const tdName = document.createElement('td'); tdName.innerText = r.Name || ''; tdName.title = r.Name || '';
+        const tdDate = document.createElement('td'); tdDate.innerText = r.DateText || ''; tdDate.title = r.DateText || '';
+        const tdType = document.createElement('td'); tdType.innerText = r.Type || ''; tdType.title = r.Type || '';
+        const tdAmount = document.createElement('td'); tdAmount.innerText = r.Amount || ''; tdAmount.title = r.Amount || '';
+        const tdReason = document.createElement('td'); tdReason.innerText = r.Reason || ''; tdReason.title = r.Reason || '';
+        tr.appendChild(tdName); tr.appendChild(tdDate); tr.appendChild(tdType); tr.appendChild(tdAmount); tr.appendChild(tdReason);
+        body.appendChild(tr);
+      }
+    }
+
+    // wire name filter change
+    const leaveNameFilter = document.getElementById('leaveNameFilter');
+    if(leaveNameFilter) leaveNameFilter.addEventListener('change', ()=> populateLeaveTable() );
+
+    /* ---------------------------
+       Remaining existing functions: Zones, Chart, Schedule, Projects
+       (unchanged from previous working code, included here)
+    --------------------------- */
+
+    function populateZones(rows){
+      const greenList = document.getElementById('greenList');
+      const yellowList = document.getElementById('yellowList');
+      const redList = document.getElementById('redList');
+      greenList.innerHTML=''; yellowList.innerHTML=''; redList.innerHTML='';
+
+      if(!rows || rows.length === 0){
+        greenList.innerHTML='<div class="muted">No data</div>';
+        yellowList.innerHTML='<div class="muted">No data</div>';
+        redList.innerHTML='<div class="muted">No data</div>';
+        return;
+      }
+
+      const sample = rows[0];
+      const keys = Object.keys(sample);
+      const nameKey = keys.find(k => ['employee','employee name','name','employeename'].includes(k.trim().toLowerCase())) || keys[0];
+      const zoneKey = keys.find(k => ['zone','status','category'].includes(k.trim().toLowerCase())) || keys[1] || keys[0];
+      const periodKey = keys.find(k => /period|date|date range|start/i.test(k.trim().toLowerCase())) || keys[2] || '';
+
+      const col4Key = keys[3] || null;
+      const col5Key = keys[4] || null;
+
+      const buckets = {green:[], yellow:[], red:[]};
+      for(const r of rows){
+        const name = r[nameKey] || r['EmployeeName'] || r['Name'] || r['employee name'] || '';
+        const zoneRaw = (r[zoneKey] || '').toString().trim().toLowerCase();
+        const period = r[periodKey] || '';
+
+        const reason1 = col4Key ? (r[col4Key] || '') : '';
+        const reason2 = col5Key ? (r[col5Key] || '') : '';
+        const reasonObj = { reason1: String(reason1).trim(), reason2: String(reason2).trim() };
+
+        const zone = (zoneRaw.includes('green')? 'green' : zoneRaw.includes('yellow')? 'yellow' : zoneRaw.includes('red')? 'red' : null);
+        const entry = { name, period, reasonObj };
+        if(zone) buckets[zone].push(entry);
+        else buckets.yellow.push(entry);
+      }
+
+      const addToList = (arr, container) => {
+        if(arr.length===0){ container.innerHTML = '<div class="muted">No employees</div>'; return; }
+        arr.sort((a,b)=> (''+a.name).localeCompare(b.name));
+        for(const p of arr) container.appendChild(makePersonRow(p.name, p.period, p.reasonObj));
+      };
+
+      addToList(buckets.green, greenList);
+      addToList(buckets.yellow, yellowList);
+      addToList(buckets.red, redList);
+    }
+
+    function makePersonRow(name, period, reasonObj){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'person';
+      const left = document.createElement('div');
+      left.innerHTML = `<strong>${escapeHtml(name)}</strong> <div class="muted" style="display:inline-block;margin-left:8px">${escapeHtml(period||'')}</div>`;
+      const btn = document.createElement('button');
+      btn.className='arrow';
+      btn.innerHTML = '▼';
+      btn.title = 'Show reason';
+      btn.addEventListener('click', (e)=>{ showPopup(name, reasonObj, e.target); });
+      wrapper.appendChild(left);
+      wrapper.appendChild(btn);
+      return wrapper;
+    }
+
+    function showPopup(name, reasonObj, anchorEl){
+      closePopup();
+      const rect = anchorEl.getBoundingClientRect();
+      const popup = document.createElement('div'); popup.className='popup';
+      popup.style.top = (rect.bottom + 8) + 'px';
+      const winW = window.innerWidth; const popupWidth = 420; let leftPos = rect.left;
+      if (leftPos + popupWidth + 20 > winW) leftPos = Math.max(10, winW - popupWidth - 20);
+      popup.style.left = leftPos + 'px';
+
+      let inner = `<button class="close" title="close">✕</button><div style="font-weight:700;margin-bottom:6px">${escapeHtml(name)}</div>`;
+      inner += `<div class="section-title">Positives</div>`; const posItems = splitItems(reasonObj.reason1||'');
+      if(posItems.length){ inner += `<ul>`; posItems.forEach(it => inner += `<li>${escapeHtml(it)}</li>`); inner += `</ul>`; } else inner += `<div class="muted">—</div>`;
+      inner += `<div class="section-title">Negatives</div>`; const negItems = splitItems(reasonObj.reason2||'');
+      if(negItems.length){ inner += `<ul>`; negItems.forEach(it => inner += `<li>${escapeHtml(it)}</li>`); inner += `</ul>`; } else inner += `<div class="muted">—</div>`;
+
+      popup.innerHTML = inner; popup.querySelector('.close').addEventListener('click', closePopup); popupContainer.appendChild(popup); currentPopup = popup;
+      setTimeout(()=>{ window.addEventListener('click', onDocClick); }, 0);
+      function onDocClick(ev){ if(!popup.contains(ev.target) && ev.target !== anchorEl) closePopup(); } popup._onDocClick = onDocClick;
+    }
+
+    function splitItems(s){
+      if(!s && s!==0) return [];
+      let str = String(s).trim();
+      str = str.replace(/\r?\n/g,'|').replace(/;/g,'|');
+      str = str.replace(/\d+\s*[\.\)]\s*/g,'|');
+      const arr = str.split('|').map(t=>t.trim()).filter(Boolean);
+      return arr;
+    }
+
+    /* ---------------------------
+       Chart functions (unchanged)
+    --------------------------- */
+    let chart = null;
+    function drawChart(labels, data){
+      const ctx = document.getElementById('latenessChart').getContext('2d');
+      if(chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Minutes late',
+            data: data,
+            borderRadius: 6,
+            barThickness: 32,
+            backgroundColor: 'rgba(239,68,68,0.9)',
+            borderColor: 'rgba(239,68,68,1)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.parsed.y + ' min' } } },
+          scales: { x: { ticks: { maxRotation: 45, minRotation: 0 } }, y: { beginAtZero: true, title: { display:true, text:'Minutes' } } }
+        }
+      });
+    }
+
+    function findGrandTotalKey(keys) {
+      if(!keys || !keys.length) return null;
+      const lowered = keys.map(k => k.trim().toLowerCase());
+      const patterns = [
+        kv => kv.includes('grand') && kv.includes('total'),
+        kv => kv.includes('grandtotal') || kv.includes('grand_total'),
+        kv => kv === 'total' || kv === 'total minutes' || kv === 'totalminutes' || kv.includes('total'),
+        kv => kv.endsWith('total') || kv.includes('total minutes') || kv.includes('minutes total'),
+      ];
+      for(const pat of patterns){
+        for(let i=0;i<lowered.length;i++){
+          if(pat(lowered[i])) return keys[i];
+        }
+      }
+      for(let i=keys.length-1;i>=0;i--){
+        const k = lowered[i];
+        if(!['employee','employee name','name','employeename'].includes(k)){
+          return keys[i];
+        }
+      }
+      return keys[keys.length-1] || null;
+    }
+
+    function parseNumber(v){
+      if(typeof v === 'number') return v;
+      if(v === undefined || v === null) return 0;
+      const s = String(v).replace(/[,]/g,'').replace(/[^\d.\-]/g,'');
+      return Number(s) || 0;
+    }
+
+    function populateChart(rows){
+      if(!rows || rows.length===0){ drawChart([],[]); return; }
+      const sample = rows[0];
+      const keys = Object.keys(sample);
+      const nameKey = keys.find(k => ['employee','employee name','name','employeename'].includes(k.trim().toLowerCase())) || keys[0];
+      const grandKey = findGrandTotalKey(keys);
+      let latenessKey = grandKey;
+      if(latenessKey && latenessKey.trim().toLowerCase() === nameKey.trim().toLowerCase()){
+        latenessKey = keys.find(k => k !== nameKey && typeof sample[k] === 'number') || keys.find(k=>k!==nameKey) || nameKey;
+      }
+      const labels = [];
+      const data = [];
+      for(const r of rows){
+        labels.push(String(r[nameKey]||''));
+        const valRaw = (grandKey && (r[grandKey] !== undefined && r[grandKey] !== null)) ? r[grandKey] : r[latenessKey];
+        data.push(parseNumber(valRaw));
+      }
+      drawChart(labels, data);
+    }
+
+    /* ---------------------------
+       Trainer schedule rendering
+    --------------------------- */
+    function populateScheduleTable(rows){
+      const container = document.getElementById('scheduleContent');
+      container.innerHTML = '';
+      if(!rows || rows.length === 0){
+        container.innerHTML = '<div class="no-schedule">No schedule data found in sheet.</div>';
+        return;
+      }
+      const headers = Object.keys(rows[0]);
+      const table = document.createElement('table'); table.className = 'schedule-table';
+      const thead = document.createElement('thead'); const thr = document.createElement('tr');
+      headers.forEach(h => { const th = document.createElement('th'); th.innerText = h; thr.appendChild(th); });
+      thead.appendChild(thr); table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      for(const r of rows){
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+          const td = document.createElement('td');
+          let val = r[h];
+          if(val instanceof Date){
+            const hasTime = (val.getHours() || val.getMinutes() || val.getSeconds());
+            if(hasTime){
+              const yyyy = val.getFullYear(); const mm = String(val.getMonth()+1).padStart(2,'0'); const dd = String(val.getDate()).padStart(2,'0');
+              const hh = String(val.getHours()).padStart(2,'0'); const min = String(val.getMinutes()).padStart(2,'0');
+              val = `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+            } else {
+              const yyyy = val.getFullYear(); const mm = String(val.getMonth()+1).padStart(2,'0'); const dd = String(val.getDate()).padStart(2,'0');
+              val = `${yyyy}-${mm}-${dd}`;
+            }
+          } else if(val === null || val === undefined) val='';
+          else val = String(val);
+          td.innerText = val; td.title = td.innerText; tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      container.appendChild(table);
+    }
+
+    /* ---------------------------
+       Projects rendering (unchanged)
+    --------------------------- */
+    function findProjectColumnKey(keys, candidates){
+      const lowered = keys.map(k => k.trim().toLowerCase());
+      for(const c of candidates){
+        const idx = lowered.indexOf(c);
+        if(idx !== -1) return keys[idx];
+      }
+      return null;
+    }
+    let lastProjectsRaw = [];
+    function populateProjectsTable(rows){
+      const body = document.getElementById('projectsBody');
+      body.innerHTML = '';
+      lastProjectsRaw = Array.isArray(rows) ? rows.slice() : [];
+      if(!lastProjectsRaw.length){
+        body.innerHTML = '<tr><td colspan="5" class="projects-empty">No projects loaded</td></tr>';
+        return;
+      }
+      const sample = lastProjectsRaw[0]; const keys = Object.keys(sample);
+      const projectKey = findProjectColumnKey(keys, ['project name','project','projectname','project_name']) || keys[0];
+      const personnelKey = findProjectColumnKey(keys, ['personnel','personnel involved','team','assigned','personnel involved']) || keys[1] || keys[0];
+      const startKey = findProjectColumnKey(keys, ['start date','start','startdate']) || keys[2] || '';
+      const compKey = findProjectColumnKey(keys, ['completion date','completion','completiondate','end date','enddate']) || keys[3] || '';
+      const statusKey = findProjectColumnKey(keys, ['status','state','project status']) || keys.find(k=>k.toLowerCase().includes('status')) || keys[keys.length-1];
+      const displayRows = lastProjectsRaw.slice().reverse();
+      const filterValue = (document.getElementById('projectStatusFilter').value || 'all').toLowerCase();
+      const filtered = displayRows.filter(r => {
+        if(!statusKey) return true;
+        const st = String(r[statusKey] || '').trim().toLowerCase();
+        if(filterValue === 'all') return true;
+        if(filterValue === 'wip') return st.includes('wip') || st.includes('in progress') || st.includes('in-progress');
+        if(filterValue === 'completed') return st.includes('completed') || st.includes('done') || st.includes('finished');
+        return true;
+      });
+      if(filtered.length === 0){
+        body.innerHTML = '<tr><td colspan="5" class="projects-empty">No projects match the selected filter</td></tr>';
+        return;
+      }
+      for(const r of filtered){
+        const tr = document.createElement('tr');
+        const pName = r[projectKey] || ''; const personnel = r[personnelKey] || ''; let sDate = r[startKey] || ''; let cDate = r[compKey] || ''; const statusRaw = r[statusKey] || '';
+        if(sDate instanceof Date){ const yyyy = sDate.getFullYear(); const mm = String(sDate.getMonth()+1).padStart(2,'0'); const dd = String(sDate.getDate()).padStart(2,'0'); sDate = `${yyyy}-${mm}-${dd}`; }
+        if(cDate instanceof Date){ const yyyy = cDate.getFullYear(); const mm = String(cDate.getMonth()+1).padStart(2,'0'); const dd = String(cDate.getDate()).padStart(2,'0'); cDate = `${yyyy}-${mm}-${dd}`; }
+        const tdName = document.createElement('td'); tdName.innerText = String(pName); tdName.title = String(pName);
+        const tdPers = document.createElement('td'); tdPers.innerText = String(personnel); tdPers.title = String(personnel);
+        const tdStart = document.createElement('td'); tdStart.innerText = String(sDate);
+        const tdComp = document.createElement('td'); tdComp.innerText = String(cDate);
+        const tdStatus = document.createElement('td'); const stNormalized = String(statusRaw).trim().toLowerCase();
+        const pill = document.createElement('span'); pill.className = 'status-pill ' + (stNormalized.includes('wip') || stNormalized.includes('in progress') ? 'status-wip' : (stNormalized.includes('complete')||stNormalized.includes('done') ? 'status-completed' : '')); pill.innerText = String(statusRaw) || '';
+        tdStatus.appendChild(pill);
+        tr.appendChild(tdName); tr.appendChild(tdPers); tr.appendChild(tdStart); tr.appendChild(tdComp); tr.appendChild(tdStatus);
+        body.appendChild(tr);
+      }
+    }
+
+    const projectStatusFilter = document.getElementById('projectStatusFilter');
+    if(projectStatusFilter) projectStatusFilter.addEventListener('change', ()=> populateProjectsTable(lastProjectsRaw) );
+
+    /* ---------------------------
+       Printing
+    --------------------------- */
+    document.getElementById('printBtn').addEventListener('click', ()=> window.print());
+
+  </script>
+</body>
+</html>
